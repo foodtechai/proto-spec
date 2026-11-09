@@ -1,12 +1,4 @@
 (function () {
-  const EXAMPLES = [
-    "우리 동네 카페를 예약하고 스탬프를 적립하는 앱",
-    "중고 물건을 동네에서 직거래하는 마켓",
-    "직원 출퇴근과 휴가 승인을 처리하는 사내 근태 서비스",
-    "강아지 산책 예약을 잡고 채팅으로 조율하는 앱",
-    "오늘 먹을 음식을 주문하고 배달 현황을 보는 서비스"
-  ];
-
   const state = {
     view: "prompt",
     prompt: "",
@@ -141,35 +133,6 @@
     applyReviseResult(window.ProtoSpec.reviseFromPrompt(state.spec, text, { screenId: screenId }));
   }
 
-  async function saveModelKey() {
-    const input = document.getElementById("api-key");
-    const key = input ? input.value.trim() : "";
-    if (key.length < 20) {
-      state.toast = "Gemini 키를 붙여 넣은 뒤 연결을 눌러 주세요.";
-      render();
-      return;
-    }
-    try {
-      const response = await fetch("/api/key", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: key })
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        state.toast = data.error || "키를 저장하지 못했습니다.";
-        render();
-        return;
-      }
-      state.model = { ready: true, model: "gemini-3.5-flash-lite" };
-      state.toast = "Gemini에 연결했습니다. 이제 수정 문장을 화면으로 고칩니다.";
-      render();
-    } catch (error) {
-      state.toast = "이 페이지는 node server.js 로 열어야 키를 저장할 수 있습니다.";
-      render();
-    }
-  }
-
   function startQA() {
     if (!state.spec || !window.ProtoQA) {
       state.toast = "품질 검사를 실행할 화면설계서가 없습니다.";
@@ -204,23 +167,63 @@
     qaTimer = setTimeout(tick, 220);
   }
 
-  function topbar(extra) {
+  function stepIndex() {
     const order = { prompt: 1, generating: 1, revising: 1, prototype: 1, spec: 2, "qa-running": 3, qa: 3 };
-    const current = order[state.view] || 1;
+    return order[state.view] || 1;
+  }
+
+  function topbar(extra) {
+    const current = stepIndex();
     const cls = (n) => (current === n ? "on" : current > n ? "done" : "");
+    const locked = !state.spec;
+    const step = (n, id, label) => `
+      <button type="button" class="step ${cls(n)}" data-step="${id}" ${locked && n > 1 ? "disabled" : ""}>
+        <span class="step-no">${n}</span>
+        <span>${label}</span>
+      </button>`;
     return `
       <header class="topbar">
-        <div class="brand"><span class="brand-mark">P</span> PROTO·SPEC</div>
-        <div class="steps">
-          <span class="${cls(1)}">1 프로토타입</span>
-          <span>→</span>
-          <span class="${cls(2)}">2 화면설계서</span>
-          <span>→</span>
-          <span class="${cls(3)}">3 품질 QA</span>
-        </div>
+        <button class="brand" type="button" data-step="prototype"><span class="brand-mark">P</span> PROTO·SPEC</button>
+        <nav class="steps" aria-label="작업 단계">
+          ${step(1, "prototype", "프로토타입")}
+          ${step(2, "spec", "화면설계서")}
+          ${step(3, "qa", "품질 QA")}
+        </nav>
         <div class="top-actions">${extra || ""}</div>
       </header>
     `;
+  }
+
+  function goStep(step) {
+    if (state.view === "generating" || state.view === "revising") return;
+    if (qaTimer && step !== "qa") {
+      clearTimeout(qaTimer);
+      qaTimer = null;
+    }
+    if (step === "prototype") {
+      state.toast = "";
+      state.view = state.spec ? "prototype" : "prompt";
+      render();
+      return;
+    }
+    if (!state.spec) {
+      state.toast = "먼저 서비스를 적고 프로토타입을 만든 뒤 다음 단계로 이동할 수 있습니다.";
+      render();
+      return;
+    }
+    if (step === "spec") {
+      state.toast = "";
+      state.view = "spec";
+      render();
+      return;
+    }
+    if (state.view !== "qa") startQA();
+  }
+
+  function bindSteps() {
+    document.querySelectorAll("[data-step]").forEach((el) => {
+      el.addEventListener("click", () => goStep(el.getAttribute("data-step")));
+    });
   }
 
   function viewPrompt() {
@@ -229,22 +232,13 @@
       <main class="prompt-wrap">
         <div class="kicker">Step 1 · Prompt to Prototype</div>
         <h1>만들고 싶은 서비스를<br/>한 문단으로 적어 주세요.</h1>
-        <p class="lede">입력한 내용을 분석해 클릭 가능한 프로토타입을 만들고, 화면설계서로 정리한 뒤 품질 QA까지 진행합니다.</p>
+        <p class="lede">문장을 적으면 팀이 같은 화면에서 프로토타입, 화면설계서, 품질 QA로 이어집니다. 위 단계 메뉴로 이동합니다.</p>
         <div class="prompt-box">
           <textarea id="prompt" placeholder="예: 우리 동네 카페를 예약하고, 방문할 때마다 스탬프를 적립하는 앱을 만들고 싶어요. 사장님은 예약을 확인할 수 있으면 좋겠습니다.">${escapeHtml(state.prompt)}</textarea>
           <div class="prompt-actions">
             <span class="char-count">구체적으로 쓸수록 화면이 풍부해집니다</span>
             <button class="btn" id="go">${state.spec ? "새 프로토타입 만들기" : "프로토타입 만들기"}</button>
           </div>
-        </div>
-        <div class="key-box prompt-key">
-          <p>Gemini API 키를 붙여 넣고 연결을 누르면 이 컴퓨터에만 저장됩니다.</p>
-          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">키 만들기</a>
-          <input id="api-key" type="password" autocomplete="off" placeholder="Gemini API 키 붙여 넣기" />
-          <button class="btn" id="save-key" type="button">연결</button>
-        </div>
-        <div class="chips">
-          ${EXAMPLES.map((ex) => `<button class="chip" data-ex="${escapeAttr(ex)}">${ex}</button>`).join("")}
         </div>
         <div class="process">
           <div class="card"><b>1단계 · 프로토타입</b><p>프롬프트로 화면을 만듭니다. 만들어진 화면에서 다시 적으면 그 프로토타입을 수정하고, 처음 화면에서 다시 적으면 새로 만듭니다.</p></div>
@@ -258,12 +252,6 @@
     const ta = document.getElementById("prompt");
     ta.addEventListener("input", () => { state.prompt = ta.value; state.toast = ""; });
     document.getElementById("go").addEventListener("click", () => { state.prompt = ta.value; startGenerate(); });
-    document.querySelectorAll("[data-ex]").forEach((el) => {
-      el.addEventListener("click", () => {
-        state.prompt = el.getAttribute("data-ex");
-        ta.value = state.prompt;
-      });
-    });
     if (state.replacePrompt) {
       ta.focus();
       ta.select();
@@ -271,8 +259,6 @@
     }
     const resume = document.getElementById("resume");
     if (resume) resume.addEventListener("click", () => { state.view = "prototype"; render(); });
-    const saveKey = document.getElementById("save-key");
-    if (saveKey) saveKey.addEventListener("click", saveModelKey);
   }
 
   function viewGenerating() {
@@ -405,19 +391,7 @@
         <label for="revise">이 화면 수정</label>
         <input id="revise" value="${escapeAttr(state.revise)}" placeholder="예: 홈 제목을 회원목으로 바꿔줘 / 회원 목록에 검색을 넣어줘" />
         <button class="btn" type="submit">수정 반영</button>
-        <span class="revise-mode">${state.model && state.model.ready ? "Gemini" : "기본 규칙"}</span>
       </form>
-      <section class="key-connect no-print">
-        <div>
-          <h3>키 연결</h3>
-          <p>${state.model && state.model.ready
-            ? "저장된 키가 거절되면 새 키를 이 칸에 붙여 넣고 다시 연결하세요. 키는 이 컴퓨터에만 저장됩니다."
-            : "Gemini API 키를 붙여 넣고 연결을 누르면 이 컴퓨터에만 저장됩니다."}</p>
-        </div>
-        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">키 만들기</a>
-        <input id="api-key" type="password" autocomplete="off" placeholder="Gemini API 키 붙여 넣기" />
-        <button class="btn" id="save-key" type="button">연결</button>
-      </section>
       <div class="workspace">
         <aside class="sidebar">
           <h3>화면 목록</h3>
@@ -459,8 +433,6 @@
       const toast = document.querySelector(".toast");
       if (toast) toast.remove();
     });
-    const saveKey = document.getElementById("save-key");
-    if (saveKey) saveKey.addEventListener("click", saveModelKey);
     document.getElementById("to-spec").addEventListener("click", () => { state.view = "spec"; render(); });
     document.querySelectorAll("[data-nav]").forEach((el) => el.addEventListener("click", () => navigate(el.getAttribute("data-nav"), false)));
     document.querySelectorAll("[data-tab]").forEach((el) => el.addEventListener("click", () => navigate(el.getAttribute("data-tab"), false)));
@@ -775,28 +747,16 @@
   }
 
   function render() {
-    if (state.view === "prompt") return viewPrompt();
-    if (state.view === "generating") return viewGenerating();
-    if (state.view === "revising") return viewRevising();
-    if (state.view === "prototype") return viewPrototype();
-    if (state.view === "spec") return viewSpec();
-    if (state.view === "qa-running") return viewQaRunning();
-    if (state.view === "qa") return viewQa();
-  }
-
-  function loadModelStatus() {
-    fetch("/api/status").then((response) => response.json()).then((data) => {
-      state.model = data;
-      if (state.view !== "prototype" && state.view !== "prompt") return;
-      const revising = document.getElementById("revise");
-      const keyInput = document.getElementById("api-key");
-      if ((revising && document.activeElement === revising) || (keyInput && document.activeElement === keyInput)) return;
-      if (revising && revising.value) state.revise = revising.value;
-      render();
-    }).catch(() => {});
+    if (state.view === "prompt") viewPrompt();
+    else if (state.view === "generating") viewGenerating();
+    else if (state.view === "revising") viewRevising();
+    else if (state.view === "prototype") viewPrototype();
+    else if (state.view === "spec") viewSpec();
+    else if (state.view === "qa-running") viewQaRunning();
+    else if (state.view === "qa") viewQa();
+    bindSteps();
   }
 
   restore();
   render();
-  loadModelStatus();
 })();
